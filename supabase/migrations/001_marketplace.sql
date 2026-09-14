@@ -1,0 +1,30 @@
+create extension if not exists pgcrypto;
+create table if not exists public.profiles(id uuid primary key references auth.users(id) on delete cascade,display_name text,phone text,city text,region text,avatar_url text,created_at timestamptz default now());
+create table if not exists public.listings(id uuid primary key default gen_random_uuid(),seller_id uuid not null references public.profiles(id) on delete cascade,title text not null,description text not null,category text not null,condition text,price numeric(14,2) not null,city text not null,region text not null,status text not null default 'pending' check(status in ('pending','active','sold','paused','rejected')),created_at timestamptz default now(),updated_at timestamptz default now());
+create table if not exists public.listing_images(id uuid primary key default gen_random_uuid(),listing_id uuid not null references public.listings(id) on delete cascade,storage_path text not null,sort_order int default 0);
+create table if not exists public.favorites(user_id uuid references public.profiles(id) on delete cascade,listing_id uuid references public.listings(id) on delete cascade,created_at timestamptz default now(),primary key(user_id,listing_id));
+create table if not exists public.conversations(id uuid primary key default gen_random_uuid(),listing_id uuid references public.listings(id) on delete set null,buyer_id uuid references public.profiles(id) on delete cascade,seller_id uuid references public.profiles(id) on delete cascade,created_at timestamptz default now());
+create table if not exists public.messages(id uuid primary key default gen_random_uuid(),conversation_id uuid references public.conversations(id) on delete cascade,sender_id uuid references public.profiles(id) on delete cascade,body text not null,created_at timestamptz default now());
+create table if not exists public.reports(id uuid primary key default gen_random_uuid(),listing_id uuid references public.listings(id) on delete cascade,reporter_id uuid references public.profiles(id) on delete cascade,reason text not null,created_at timestamptz default now());
+
+alter table public.profiles enable row level security;
+alter table public.listings enable row level security;
+alter table public.listing_images enable row level security;
+alter table public.favorites enable row level security;
+alter table public.conversations enable row level security;
+alter table public.messages enable row level security;
+alter table public.reports enable row level security;
+
+create policy "public profiles read" on public.profiles for select using (true);
+create policy "own profile write" on public.profiles for all to authenticated using ((select auth.uid())=id) with check ((select auth.uid())=id);
+create policy "active listings public read" on public.listings for select using (status='active' or (select auth.uid())=seller_id);
+create policy "own listings insert" on public.listings for insert to authenticated with check ((select auth.uid())=seller_id);
+create policy "own listings update" on public.listings for update to authenticated using ((select auth.uid())=seller_id) with check ((select auth.uid())=seller_id);
+create policy "own listings delete" on public.listings for delete to authenticated using ((select auth.uid())=seller_id);
+create policy "listing images public read" on public.listing_images for select using (true);
+create policy "favorites owner" on public.favorites for all to authenticated using ((select auth.uid())=user_id) with check ((select auth.uid())=user_id);
+create policy "conversation participants" on public.conversations for select to authenticated using ((select auth.uid()) in (buyer_id,seller_id));
+create policy "conversation create" on public.conversations for insert to authenticated with check ((select auth.uid())=buyer_id or (select auth.uid())=seller_id);
+create policy "message participants read" on public.messages for select to authenticated using (exists(select 1 from public.conversations c where c.id=conversation_id and (select auth.uid()) in (c.buyer_id,c.seller_id)));
+create policy "message sender insert" on public.messages for insert to authenticated with check ((select auth.uid())=sender_id and exists(select 1 from public.conversations c where c.id=conversation_id and (select auth.uid()) in (c.buyer_id,c.seller_id)));
+create policy "report own" on public.reports for insert to authenticated with check ((select auth.uid())=reporter_id);
