@@ -1,12 +1,72 @@
 'use client';
-import {useMemo,useState} from 'react';
+import {useEffect,useMemo,useState} from 'react';
 import Link from 'next/link';
-import {Search,Heart,Plus,MapPin,ShieldCheck,ChevronRight,Menu,X,MessageCircle,SlidersHorizontal} from 'lucide-react';
+import {Search,Heart,Plus,MapPin,ShieldCheck,ChevronRight,Menu,X,MessageCircle,SlidersHorizontal,UserRound,LayoutDashboard} from 'lucide-react';
 import {categories,cities,listings,money} from '@/lib/data';
 
-export function Header(){const [open,setOpen]=useState(false);return <><div className="top"><div className="container topin"><span>🇪🇹 Ethiopia's local marketplace</span><span>Safe buying starts with meeting in public places.</span></div></div><header className="nav"><div className="container navin"><Link href="/" className="brand"><span className="mark">H</span> Habesha Market</Link><nav className="navlinks"><Link href="/search">Browse</Link><Link href="/search?category=Cars">Cars</Link><Link href="/search?category=Real%20estate">Real estate</Link><Link href="/search?category=Electronics">Electronics</Link><Link href="/search?category=Jobs">Jobs</Link></nav><div className="actions"><Link href="/dashboard" className="ghost">My account</Link><Link href="/sell" className="primary"><Plus size={16}/> Sell</Link><button className="mobilemenu" onClick={()=>setOpen(!open)}>{open?<X/>:<Menu/>}</button></div></div></header>{open&&<div style={{background:'#fff',borderBottom:'1px solid var(--line)',padding:'12px 16px'}}><div className="container" style={{display:'grid',gap:12}}><Link href="/search" onClick={()=>setOpen(false)}>Browse all</Link><Link href="/dashboard" onClick={()=>setOpen(false)}>My account</Link><Link href="/sell" onClick={()=>setOpen(false)}>Post an ad</Link></div></div>}</>}
+export function Header(){
+  const [open,setOpen]=useState(false);
 
-export function ListingCard({item}:{item:any}){const [fav,setFav]=useState(false);return <Link href={`/listing/${item.id}`} className="card"><div className="photo"><img src={item.image} alt={item.title}/>{item.verified&&<span className="badge">VERIFIED</span>}<button className="heart" onClick={e=>{e.preventDefault();setFav(!fav)}} aria-label="favorite">{fav?'♥':'♡'}</button></div><div className="cardbody"><div className="price">{money(item.price)}</div><div className="title">{item.title}</div><div className="meta"><MapPin size={12}/>{item.city} · {item.time}</div>{item.verified&&<div className="trust"><ShieldCheck size={12} style={{verticalAlign:'-2px'}}/> Verified seller</div>}</div></Link>}
+  useEffect(()=>{
+    const onKey=(event:KeyboardEvent)=>{if(event.key==='Escape')setOpen(false)};
+    window.addEventListener('keydown',onKey);
+    document.body.style.overflow=open?'hidden':'';
+    return()=>{window.removeEventListener('keydown',onKey);document.body.style.overflow=''};
+  },[open]);
+
+  const close=()=>setOpen(false);
+
+  return <>
+    <div className="top"><div className="container topin"><span>🇪🇹 Ethiopia's local marketplace</span><span className="topnote">Safe buying starts with meeting in public places.</span></div></div>
+    <header className="nav">
+      <div className="container navin">
+        <Link href="/" className="brand" onClick={close}><span className="mark">H</span><span>Habesha Market</span></Link>
+        <nav className="navlinks" aria-label="Primary navigation">
+          <Link href="/search">Browse</Link><Link href="/search?category=Cars">Cars</Link><Link href="/search?category=Real%20estate">Real estate</Link><Link href="/search?category=Electronics">Electronics</Link><Link href="/search?category=Jobs">Jobs</Link>
+        </nav>
+        <div className="actions">
+          <Link href="/dashboard" className="ghost accountlink"><UserRound size={15}/> My account</Link>
+          <Link href="/sell" className="primary selltop"><Plus size={16}/> Sell</Link>
+          <button className={`mobilemenu ${open?'is-open':''}`} onClick={()=>setOpen(!open)} aria-label={open?'Close navigation':'Open navigation'} aria-expanded={open} aria-controls="mobile-navigation">
+            <span className="hamburger-lines"><span/><span/><span/></span>
+          </button>
+        </div>
+      </div>
+    </header>
+    {open&&<>
+      <button className="menuoverlay" aria-label="Close menu" onClick={close}/>
+      <div id="mobile-navigation" className="mobilepanel" role="dialog" aria-label="Marketplace navigation">
+        <div className="mobilepanel-inner">
+          <div className="mobile-account">
+            <div className="user-avatar"><UserRound size={21}/></div>
+            <div><strong>Your marketplace</strong><span>Sign in to save ads and message sellers</span></div>
+          </div>
+          <Link className="mobile-account-cta" href="/login" onClick={close}><UserRound size={17}/> Sign in / Create account <ChevronRight size={16}/></Link>
+          <div className="mobile-search">
+            <Search size={17}/><Link href="/search" onClick={close}>Search cars, homes, phones & more</Link>
+          </div>
+          <div className="mobile-menu-section">
+            <div className="mobile-label">YOUR MARKETPLACE</div>
+            <Link href="/dashboard" onClick={close}><LayoutDashboard size={18}/> My dashboard <ChevronRight size={16}/></Link>
+            <Link href="/search" onClick={close}><Heart size={18}/> Saved listings <ChevronRight size={16}/></Link>
+            <Link href="/dashboard" onClick={close}><MessageCircle size={18}/> Messages <ChevronRight size={16}/></Link>
+          </div>
+          <div className="mobile-menu-section">
+            <div className="mobile-label">BROWSE</div>
+            <Link href="/search?category=Cars" onClick={close}>🚗 Cars <ChevronRight size={16}/></Link>
+            <Link href="/search?category=Real%20estate" onClick={close}>🏠 Real estate <ChevronRight size={16}/></Link>
+            <Link href="/search?category=Electronics" onClick={close}>📱 Electronics <ChevronRight size={16}/></Link>
+            <Link href="/search?category=Jobs" onClick={close}>💼 Jobs <ChevronRight size={16}/></Link>
+          </div>
+          <Link className="mobile-sell" href="/sell" onClick={close}><Plus size={18}/> Post an ad</Link>
+          <p className="mobile-safety">🇪🇹 Built for Ethiopia · Buy locally, meet safely.</p>
+        </div>
+      </div>
+    </>}
+  </>
+}
+
+export function ListingCard({item}:{item:any}){const [fav,setFav]=useState(false);return <Link href={`/listing/${item.id}`} className="card"><div className="photo"><img src={item.image} alt={item.title}/>{item.verified&&<span className="badge">VERIFIED</span>}<button className="heart" onClick={e=>{e.preventDefault();setFav(!fav)}} aria-label={fav?'Remove from favorites':'Save listing'}>{fav?'♥':'♡'}</button></div><div className="cardbody"><div className="price">{money(item.price)}</div><div className="title">{item.title}</div><div className="meta"><MapPin size={12}/>{item.city} · {item.time}</div>{item.verified&&<div className="trust"><ShieldCheck size={12} style={{verticalAlign:'-2px'}}/> Verified seller</div>}</div></Link>}
 
 export function Footer(){return <footer className="footer"><div className="container footergrid"><div><div className="brand"><span className="mark">H</span> Habesha Market</div><p>Buy locally. Sell confidently. Built for Ethiopia.</p></div><div><h4>Marketplace</h4><p>Cars<br/>Homes<br/>Electronics<br/>Jobs</p></div><div><h4>For sellers</h4><p>Post an ad<br/>Seller guide<br/>Safety centre</p></div><div><h4>Help</h4><p>Contact us<br/>Terms<br/>Privacy</p></div></div></footer>}
 
