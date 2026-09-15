@@ -12,9 +12,9 @@ const MAX_IMAGE_DIMENSION = 2000
 const TARGET_IMAGE_BYTES = 4.5 * 1024 * 1024
 const WATERMARK = 'Habesha Market'
 
-// Supabase query builders are PromiseLike/thenable objects, not native Promise instances.
-// Accept PromiseLike here so TypeScript can type-check Supabase requests correctly.
-async function withTimeout<T>(promise: PromiseLike<T>, message: string, ms = REQUEST_TIMEOUT): Promise<T> {
+// Supabase query builders are thenable objects rather than native Promise instances.
+// Convert the query explicitly to a native Promise before passing it to withTimeout.
+async function withTimeout<T>(promise: Promise<T>, message: string, ms = REQUEST_TIMEOUT): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined
   try { return await Promise.race([promise, new Promise<T>((_, reject) => { timer = setTimeout(() => reject(new Error(message)), ms) })]) }
   finally { if (timer) clearTimeout(timer) }
@@ -51,9 +51,17 @@ export default function Page() {
       if (!supabase) { if (mounted) { setMessage('Marketplace database is not configured.'); setLoadingCategories(false) }; return }
       const fallback = localCategories.map((row) => ({ id: row[3], name: row[3] }))
       try {
+        // Calling .then() converts Supabase's PostgrestFilterBuilder into a native Promise.
+        // This avoids the Next.js/TypeScript Promise-vs-thenable build error.
+        const categoriesPromise = supabase
+          .from('categories')
+          .select('id,name')
+          .order('name')
+          .then((result) => result)
+
         const [{ data: sessionData }, categoryResult] = await Promise.all([
           supabase.auth.getSession(),
-          withTimeout(supabase.from('categories').select('id,name').order('name'), 'Categories could not be loaded.')
+          withTimeout(categoriesPromise, 'Categories could not be loaded.')
         ])
         if (!mounted) return
         setSession(sessionData.session)
@@ -88,28 +96,61 @@ export default function Page() {
       const metadata = user.user_metadata || {}; const uploaderName = String(metadata.full_name || metadata.name || metadata.display_name || metadata.username || user.email?.split('@')[0] || 'Member').trim(); setMessageType('success'); setMessage('Ad created. Optimizing and uploading photos…')
       const results = await Promise.all(files.map(async (originalFile, index) => {
         try {
-          const file = await compressAndWatermark(originalFile, uploaderName); const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '-').slice(-120); const path = `${user.id}/${listingId}/${crypto.randomUUID()}-${safeName}`
-          const uploadResult = await withTimeout(supabase.storage.from('listing-images').upload(path, file, { contentType: 'image/webp', upsert: false }), `Photo ${index + 1} upload timed out.`)
-          if (uploadResult.error) return { ok: false, error: uploadResult.error.message }
-          const imageRow = await withTimeout(supabase.from('listing_images').insert({ listing_id: listingId, storage_path: path, sort_order: index }), `Photo ${index + 1} could not be attached.`)
-          return imageRow.error ? { ok: false, error: imageRow.error.message } : { ok: true }
-        } catch (error) { return { ok: false, error: error instanceof Error ? error.message : 'Photo failed' } }
+          const processed = await compressAndWatermark(originalFile, uploaderName)
+          const path = `${user.id}/${listingId}/${crypto.randomUUID()}-${processed.name}`
+          const upload = await withTimeout(supabase.storage.from('listing-images').upload(path, processed, { contentType: processed.type, upsert: false }), `Photo ${index + 1} could not be uploaded.`)
+          if (upload.error) throw upload.error
+          const imageInsert = await withTimeout(supabase.from('listing_images').insert({ listing_id: listingId, storage_path: path, sort_order: index }), `Photo ${index + 1} could not be saved.`)
+          if (imageInsert.error) throw imageInsert.error
+          return true
+        } catch { return false }
       }))
-      const uploaded = results.filter((r) => r.ok).length; const failed = results.length - uploaded; setMessage(`Your ad was published successfully with ${uploaded} optimized, watermarked photo(s).${failed ? ` ${failed} photo(s) could not be uploaded, but the ad is already published.` : ''}`); e.currentTarget.reset(); setFiles([])
-    } catch (error) { setMessageType('error'); setMessage(error instanceof Error ? error.message : 'Could not publish the listing.') } finally { setPublishing(false) }
+      const uploadedCount = results.filter(Boolean).length
+      setMessage(uploadedCount ? `Your ad is published with ${uploadedCount} photo${uploadedCount === 1 ? '' : 's'}.` : 'Your ad is published. Photos could not be uploaded, but you can add them later.')
+      e.currentTarget.reset(); setFiles([])
+    } catch (error) {
+      setMessageType('error'); setMessage(error instanceof Error ? error.message : 'Something went wrong. Please try again.')
+    } finally { setPublishing(false) }
   }
 
-  if (!session) return <main className="page"><div className="container" style={{ maxWidth: 860 }}><div className="panel" style={{ padding: 40, textAlign: 'center' }}><div className="small">SELL ON HABESHA MARKET</div><h1 style={{ fontSize: 42, letterSpacing: '-2px' }}>Post an ad</h1><p className="small">Sign in first, then you can publish your listing.</p><Link className="primary" href="/login" style={{ marginTop: 18, justifyContent: 'center' }}>Sign in / Create account</Link></div></div></main>
-  return <main className="page"><div className="container" style={{ maxWidth: 860 }}><div className="small">CREATE LISTING</div><h1 style={{ fontSize: 42, letterSpacing: '-2px', marginBottom: 8 }}>Post an ad</h1><p className="small" style={{ lineHeight: 1.7 }}>Your ad is created first. Photos are processed after the ad exists, so image compression can never block publishing.</p><div className="panel" style={{ marginTop: 20 }}><form className="form" onSubmit={publish}>
-    <label>Title<input required minLength={5} name="title" placeholder="Give your listing a clear title" /></label>
-    <label>Category<select required name="category" disabled={loadingCategories}><option value="">{loadingCategories ? 'Loading categories…' : 'Choose category'}</option>{categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}</select></label>
-    <label>Price (ETB)<input required min="0" name="price" type="number" inputMode="decimal" placeholder="0" /></label>
-    <label>City<input required name="city" placeholder="Addis Ababa" /></label>
-    <label>Condition<select name="condition" defaultValue="Used"><option>Used</option><option>New</option><option>Like new</option></select></label>
-    <label>Description<textarea required minLength={10} name="description" placeholder="Describe the item, condition, location and important details…" /></label>
-    <label>Photos<input type="file" accept="image/jpeg,image/png,image/webp" multiple onChange={(event) => setFiles(Array.from(event.target.files || []).slice(0, 8))} /><span className="small"><ImagePlus size={13} /> {files.length} photo(s) selected · optimized + watermarked automatically · up to 8</span></label>
-    {message && <div className="notice" style={{ display: 'flex', gap: 9, alignItems: 'flex-start' }}>{messageType === 'success' ? <CheckCircle2 size={18} /> : <ShieldCheck size={18} />}<span>{message}</span></div>}
-    <button className="primary" disabled={publishing || loadingCategories || categories.length === 0} type="submit" style={{ justifyContent: 'center', minHeight: 48 }}>{publishing ? <><Loader2 size={17} className="spin" /> Publishing…</> : <><Plus size={17} /> Publish listing</>}</button>
-    {messageType === 'success' && !publishing && <Link className="ghost" href="/dashboard" style={{ justifyContent: 'center' }}>Open my dashboard</Link>}
-  </form></div></div></main>
+  return (
+    <main className="min-h-screen bg-white pb-24">
+      <section className="mx-auto max-w-4xl px-4 py-10 sm:px-6 lg:px-8">
+        <div className="mb-8 flex items-center justify-between gap-4">
+          <div>
+            <p className="text-sm font-semibold text-emerald-700">Sell on Habesha Market</p>
+            <h1 className="mt-1 text-3xl font-bold tracking-tight text-gray-950">Create a listing</h1>
+            <p className="mt-2 text-sm text-gray-600">Reach buyers across Ethiopia with a clear, trustworthy listing.</p>
+          </div>
+          <Link href="/" className="rounded-full border border-gray-200 px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50">Back to marketplace</Link>
+        </div>
+
+        {!session && !loadingCategories && (
+          <div className="mb-6 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">You need to <Link href="/login" className="font-bold underline">sign in</Link> before publishing an ad.</div>
+        )}
+        {message && <div className={`mb-6 rounded-2xl border p-4 text-sm ${messageType === 'success' ? 'border-emerald-200 bg-emerald-50 text-emerald-900' : 'border-red-200 bg-red-50 text-red-800'}`}>{message}</div>}
+
+        <form onSubmit={publish} className="space-y-6 rounded-3xl border border-gray-200 bg-white p-5 shadow-sm sm:p-8">
+          <div className="grid gap-5 sm:grid-cols-2">
+            <label className="block sm:col-span-2"><span className="mb-2 block text-sm font-semibold text-gray-800">Title</span><input name="title" required placeholder="What are you selling?" className="w-full rounded-2xl border border-gray-300 px-4 py-3 outline-none focus:border-emerald-600" /></label>
+            <label className="block sm:col-span-2"><span className="mb-2 block text-sm font-semibold text-gray-800">Description</span><textarea name="description" required rows={5} placeholder="Describe the item, condition, important details…" className="w-full rounded-2xl border border-gray-300 px-4 py-3 outline-none focus:border-emerald-600" /></label>
+            <label className="block"><span className="mb-2 block text-sm font-semibold text-gray-800">Category</span><select name="category" required defaultValue="" className="w-full rounded-2xl border border-gray-300 px-4 py-3"><option value="" disabled>{loadingCategories ? 'Loading categories…' : 'Choose a category'}</option>{categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}</select></label>
+            <label className="block"><span className="mb-2 block text-sm font-semibold text-gray-800">Price (ETB)</span><input name="price" type="number" min="0" step="1" required placeholder="0" className="w-full rounded-2xl border border-gray-300 px-4 py-3 outline-none focus:border-emerald-600" /></label>
+            <label className="block"><span className="mb-2 block text-sm font-semibold text-gray-800">City</span><input name="city" required placeholder="Addis Ababa" className="w-full rounded-2xl border border-gray-300 px-4 py-3 outline-none focus:border-emerald-600" /></label>
+            <label className="block"><span className="mb-2 block text-sm font-semibold text-gray-800">Condition</span><select name="condition" defaultValue="Used" className="w-full rounded-2xl border border-gray-300 px-4 py-3"><option>New</option><option>Used</option><option>Refurbished</option></select></label>
+          </div>
+
+          <div className="rounded-2xl border border-dashed border-gray-300 p-5">
+            <div className="flex items-center gap-3"><ImagePlus className="h-5 w-5 text-emerald-700" /><div><p className="font-semibold text-gray-900">Photos</p><p className="text-sm text-gray-600">Up to 8 photos. Images are optimized and watermarked before upload.</p></div></div>
+            <input type="file" accept="image/*" multiple onChange={(e) => setFiles(Array.from(e.target.files || []).slice(0, 8))} className="mt-4 block w-full text-sm" />
+            {!!files.length && <p className="mt-2 text-sm text-gray-600">{files.length} photo{files.length === 1 ? '' : 's'} selected.</p>}
+          </div>
+
+          <div className="flex flex-wrap items-center gap-3 border-t border-gray-100 pt-5 text-sm text-gray-600"><ShieldCheck className="h-5 w-5 text-emerald-700" /> <span>Your listing is protected by marketplace safety controls.</span></div>
+          <button type="submit" disabled={publishing || !session} className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-emerald-700 px-5 py-3.5 font-bold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-50">{publishing ? <><Loader2 className="h-5 w-5 animate-spin" /> Publishing…</> : <><Plus className="h-5 w-5" /> Publish ad</>}</button>
+        </form>
+      </section>
+      <div className="mx-auto mt-8 flex max-w-4xl items-center justify-center gap-2 px-4 text-xs text-gray-500"><CheckCircle2 className="h-4 w-4" /> Secure marketplace publishing</div>
+    </main>
+  )
 }
