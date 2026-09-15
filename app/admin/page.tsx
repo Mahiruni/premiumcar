@@ -19,6 +19,10 @@ type Listing = {
   categories?:{name:string}[]|null
 }
 
+type ListingRow = Omit<Listing,'categories'> & {
+  categories:{name:string}[]|null
+}
+
 export default function Admin(){
   const [session,setSession]=useState<any>(null)
   const [pending,setPending]=useState<Listing[]>([])
@@ -43,8 +47,9 @@ export default function Admin(){
       supabase.from('profiles').select('id',{count:'exact',head:true}),
     ])
     if(pendingRes.error)setError(pendingRes.error.message)
-    setPending((pendingRes.data||[]) as Listing[])
-    setCounts({pending:pendingRes.data?.length||0,active:activeRes.count||0,reports:reportsRes.count||0,users:usersRes.count||0})
+    const rows = (pendingRes.data ?? []) as unknown as ListingRow[]
+    setPending(rows.map(({categories,...item})=>({...item,categories:categories ?? null})))
+    setCounts({pending:rows.length,active:activeRes.count||0,reports:reportsRes.count||0,users:usersRes.count||0})
     setLoading(false)
   }
 
