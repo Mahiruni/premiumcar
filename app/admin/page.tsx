@@ -16,11 +16,6 @@ type Listing = {
   status:string
   created_at:string
   description:string|null
-  categories?:{name:string}[]|null
-}
-
-type ListingRow = Omit<Listing,'categories'> & {
-  categories:{name:string}[]|null
 }
 
 export default function Admin(){
@@ -41,14 +36,14 @@ export default function Admin(){
     if(!session){setLoading(false);return}
 
     const [pendingRes,activeRes,reportsRes,usersRes]=await Promise.all([
-      supabase.from('listings').select('id,title,price,city,condition,status,created_at,description,categories(name)').eq('status','pending').order('created_at',{ascending:false}),
+      supabase.from('listings').select('id,title,price,city,condition,status,created_at,description').eq('status','pending').order('created_at',{ascending:false}),
       supabase.from('listings').select('id',{count:'exact',head:true}).eq('status','active'),
       supabase.from('reports').select('id',{count:'exact',head:true}),
       supabase.from('profiles').select('id',{count:'exact',head:true}),
     ])
     if(pendingRes.error)setError(pendingRes.error.message)
-    const rows = (pendingRes.data ?? []) as unknown as ListingRow[]
-    setPending(rows.map(({categories,...item})=>({...item,categories:categories ?? null})))
+    const rows: Listing[] = pendingRes.data ?? []
+    setPending(rows)
     setCounts({pending:rows.length,active:activeRes.count||0,reports:reportsRes.count||0,users:usersRes.count||0})
     setLoading(false)
   }
@@ -78,7 +73,7 @@ export default function Admin(){
     <div className="panel">
       <div className="sectionhead"><h2>Pending listings</h2><span className="small">{loading?'Loading…':`${pending.length} awaiting review`}</span></div>
       {loading?<div className="small">Loading moderation queue…</div>:pending.length===0?<div style={{padding:'42px 10px',textAlign:'center'}}><Check size={28}/><h3>Queue is clear</h3><p className="small">There are no pending listings right now.</p></div>:pending.map(item=><article key={item.id} className="statrow" style={{alignItems:'flex-start',gap:18}}>
-        <div style={{minWidth:0,flex:1}}><b>{item.title}</b><div className="small" style={{marginTop:5}}>{item.categories?.[0]?.name||'Marketplace'} · {item.city} · {item.condition} · {money(item.price)}</div>{item.description&&<p className="small" style={{margin:'8px 0 0',maxWidth:760}}>{item.description.slice(0,180)}{item.description.length>180?'…':''}</p>}</div>
+        <div style={{minWidth:0,flex:1}}><b>{item.title}</b><div className="small" style={{marginTop:5}}>Marketplace · {item.city} · {item.condition} · {money(item.price)}</div>{item.description&&<p className="small" style={{margin:'8px 0 0',maxWidth:760}}>{item.description.slice(0,180)}{item.description.length>180?'…':''}</p>}</div>
         <div style={{display:'flex',gap:8,flexShrink:0}}><button className="ghost" disabled={busy===item.id} onClick={()=>moderate(item.id,'rejected')}><X size={15}/> Reject</button><button className="primary" disabled={busy===item.id} onClick={()=>moderate(item.id,'active')}><Check size={15}/> {busy===item.id?'Saving…':'Approve'}</button></div>
       </article>)}
     </div>
