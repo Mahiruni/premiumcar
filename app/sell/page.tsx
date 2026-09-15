@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import Link from 'next/link'
 import { CheckCircle2, ImagePlus, Loader2, Plus, ShieldCheck } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
@@ -12,105 +12,229 @@ const MAX_IMAGE_DIMENSION = 2000
 const TARGET_IMAGE_BYTES = 4.5 * 1024 * 1024
 const WATERMARK = 'Habesha Market'
 
-// Supabase query builders are thenable objects rather than native Promise instances.
-// Convert the query explicitly to a native Promise before passing it to withTimeout.
+type Category = { id: string; name: string }
+
 async function withTimeout<T>(promise: Promise<T>, message: string, ms = REQUEST_TIMEOUT): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined
-  try { return await Promise.race([promise, new Promise<T>((_, reject) => { timer = setTimeout(() => reject(new Error(message)), ms) })]) }
-  finally { if (timer) clearTimeout(timer) }
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(message)), ms)
+      }),
+    ])
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
 }
 
 function loadImage(file: File): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
-    const url = URL.createObjectURL(file); const image = new Image()
+    const url = URL.createObjectURL(file)
+    const image = new Image()
     const cleanup = () => URL.revokeObjectURL(url)
-    image.onload = () => { cleanup(); resolve(image) }; image.onerror = () => { cleanup(); reject(new Error(`Could not read ${file.name}.`)) }; image.src = url
+    image.onload = () => { cleanup(); resolve(image) }
+    image.onerror = () => { cleanup(); reject(new Error(`Could not read ${file.name}.`)) }
+    image.src = url
   })
 }
-function canvasToBlob(canvas: HTMLCanvasElement, quality: number): Promise<Blob> { return new Promise((resolve, reject) => { canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error('Could not process the image.')), 'image/webp', quality) }) }
+
+function canvasToBlob(canvas: HTMLCanvasElement, quality: number): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error('Could not process the image.')), 'image/webp', quality)
+  })
+}
+
 async function compressAndWatermark(file: File, uploaderName: string): Promise<File> {
   return withTimeout((async () => {
-    const image = await loadImage(file); const longestSide = Math.max(image.naturalWidth, image.naturalHeight); const scale = Math.min(1, MAX_IMAGE_DIMENSION / longestSide)
-    const width = Math.max(1, Math.round(image.naturalWidth * scale)); const height = Math.max(1, Math.round(image.naturalHeight * scale)); const canvas = document.createElement('canvas'); canvas.width = width; canvas.height = height
-    const context = canvas.getContext('2d'); if (!context) throw new Error(`Could not process ${file.name}.`)
-    context.imageSmoothingEnabled = true; context.imageSmoothingQuality = 'high'; context.drawImage(image, 0, 0, width, height)
-    const watermark = `${WATERMARK} • ${(uploaderName.trim() || 'Member').slice(0, 60)}`; const fontSize = Math.max(18, Math.round(Math.min(width, height) * 0.025)); const padding = Math.max(14, Math.round(fontSize * 0.65))
-    context.font = `600 ${fontSize}px Arial, sans-serif`; context.textAlign = 'right'; context.textBaseline = 'bottom'; const textWidth = context.measureText(watermark).width; const boxWidth = textWidth + padding * 2; const boxHeight = fontSize + padding * 1.45
-    context.fillStyle = 'rgba(0,0,0,.52)'; context.beginPath(); context.roundRect(width - boxWidth, height - boxHeight, boxWidth, boxHeight, Math.max(8, fontSize * .35)); context.fill(); context.fillStyle = 'rgba(255,255,255,.94)'; context.fillText(watermark, width - padding, height - padding)
-    let quality = .9; let blob = await canvasToBlob(canvas, quality); while (blob.size > TARGET_IMAGE_BYTES && quality > .68) { quality -= .06; blob = await canvasToBlob(canvas, quality) }
-    const baseName = file.name.replace(/\.[^.]+$/, '').replace(/[^a-zA-Z0-9._-]/g, '-').slice(-100) || 'image'; return new File([blob], `${baseName}.webp`, { type: 'image/webp', lastModified: Date.now() })
+    const image = await loadImage(file)
+    const longestSide = Math.max(image.naturalWidth, image.naturalHeight)
+    const scale = Math.min(1, MAX_IMAGE_DIMENSION / longestSide)
+    const width = Math.max(1, Math.round(image.naturalWidth * scale))
+    const height = Math.max(1, Math.round(image.naturalHeight * scale))
+    const canvas = document.createElement('canvas')
+    canvas.width = width
+    canvas.height = height
+    const context = canvas.getContext('2d')
+    if (!context) throw new Error(`Could not process ${file.name}.`)
+
+    context.imageSmoothingEnabled = true
+    context.imageSmoothingQuality = 'high'
+    context.drawImage(image, 0, 0, width, height)
+
+    const watermark = `${WATERMARK} • ${(uploaderName.trim() || 'Member').slice(0, 60)}`
+    const fontSize = Math.max(18, Math.round(Math.min(width, height) * 0.025))
+    const padding = Math.max(14, Math.round(fontSize * 0.65))
+    context.font = `600 ${fontSize}px Arial, sans-serif`
+    context.textAlign = 'right'
+    context.textBaseline = 'bottom'
+    const textWidth = context.measureText(watermark).width
+    const boxWidth = textWidth + padding * 2
+    const boxHeight = fontSize + padding * 1.45
+    context.fillStyle = 'rgba(0,0,0,.52)'
+    context.beginPath()
+    context.roundRect(width - boxWidth, height - boxHeight, boxWidth, boxHeight, Math.max(8, fontSize * 0.35))
+    context.fill()
+    context.fillStyle = 'rgba(255,255,255,.94)'
+    context.fillText(watermark, width - padding, height - padding)
+
+    let quality = 0.9
+    let blob = await canvasToBlob(canvas, quality)
+    while (blob.size > TARGET_IMAGE_BYTES && quality > 0.68) {
+      quality -= 0.06
+      blob = await canvasToBlob(canvas, quality)
+    }
+
+    const baseName = file.name.replace(/\.[^.]+$/, '').replace(/[^a-zA-Z0-9._-]/g, '-').slice(-100) || 'image'
+    return new File([blob], `${baseName}.webp`, { type: 'image/webp', lastModified: Date.now() })
   })(), `Photo ${file.name} could not be processed. You can publish the ad without that photo.`, IMAGE_TIMEOUT)
 }
 
 export default function Page() {
-  const [categories, setCategories] = useState<any[]>([]); const [session, setSession] = useState<any>(null); const [loadingCategories, setLoadingCategories] = useState(true); const [publishing, setPublishing] = useState(false); const [message, setMessage] = useState(''); const [messageType, setMessageType] = useState<'success' | 'error'>('error'); const [files, setFiles] = useState<File[]>([])
+  const [categories, setCategories] = useState<Category[]>([])
+  const [session, setSession] = useState<any>(null)
+  const [loadingCategories, setLoadingCategories] = useState(true)
+  const [publishing, setPublishing] = useState(false)
+  const [message, setMessage] = useState('')
+  const [messageType, setMessageType] = useState<'success' | 'error'>('error')
+  const [files, setFiles] = useState<File[]>([])
 
   useEffect(() => {
     let mounted = true
-    async function load() {
-      if (!supabase) { if (mounted) { setMessage('Marketplace database is not configured.'); setLoadingCategories(false) }; return }
-      const fallback = localCategories.map((row) => ({ id: row[3], name: row[3] }))
-      try {
-        // Calling .then() converts Supabase's PostgrestFilterBuilder into a native Promise.
-        // This avoids the Next.js/TypeScript Promise-vs-thenable build error.
-        const categoriesPromise = supabase
-          .from('categories')
-          .select('id,name')
-          .order('name')
-          .then((result) => result)
+    const fallback: Category[] = localCategories.map((row) => ({ id: row[3], name: row[3] }))
 
-        const [{ data: sessionData }, categoryResult] = await Promise.all([
-          supabase.auth.getSession(),
-          withTimeout(categoriesPromise, 'Categories could not be loaded.')
-        ])
-        if (!mounted) return
-        setSession(sessionData.session)
-        setCategories(categoryResult.error || !categoryResult.data?.length ? fallback : categoryResult.data)
-        if (categoryResult.error) setMessage('Using the marketplace category list. You can still publish your ad.')
-      } catch {
-        if (mounted) setCategories(fallback)
-      } finally { if (mounted) setLoadingCategories(false) }
+    if (!supabase) {
+      setCategories(fallback)
+      setLoadingCategories(false)
+      setMessage('Marketplace database is not configured. Add the Supabase environment variables in Vercel.')
+      return () => { mounted = false }
     }
-    load(); const listener = supabase?.auth.onAuthStateChange((_event, nextSession) => { if (mounted) setSession(nextSession) }); return () => { mounted = false; listener?.data.subscription.unsubscribe() }
+
+    async function loadSession() {
+      try {
+        const { data } = await withTimeout(supabase.auth.getSession(), 'Authentication is taking too long. Please refresh.')
+        if (mounted) setSession(data.session)
+      } catch {
+        if (mounted) setMessage('Could not load your session. Please refresh or sign in again.')
+      } finally {
+        if (mounted) {
+          setCategories(fallback)
+          setLoadingCategories(false)
+        }
+      }
+    }
+
+    void loadSession()
+    const { data: authListener } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      if (mounted) setSession(nextSession)
+    })
+
+    return () => {
+      mounted = false
+      authListener.subscription.unsubscribe()
+    }
   }, [])
 
-  async function publish(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault(); if (publishing) return; setMessage(''); setMessageType('error'); if (!supabase) { setMessage('Marketplace database is not configured.'); return }; setPublishing(true)
+  async function publish(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault()
+    if (publishing) return
+    setMessage('')
+    setMessageType('error')
+
+    if (!supabase) {
+      setMessage('Marketplace database is not configured.')
+      return
+    }
+
+    setPublishing(true)
     try {
-      const { data: authData, error: authError } = await withTimeout(supabase.auth.getUser(), 'Authentication is taking too long. Please sign in again.')
-      if (authError || !authData.user) { window.location.href = '/login'; return }
-      const user = authData.user; const form = new FormData(e.currentTarget); const title = String(form.get('title') || '').trim(); const description = String(form.get('description') || '').trim(); const city = String(form.get('city') || '').trim(); const condition = String(form.get('condition') || 'Used'); const categoryValue = String(form.get('category') || '').trim(); const price = Number(form.get('price'))
-      if (!title || !description || !city || !categoryValue || !Number.isFinite(price) || price < 0) throw new Error('Please complete all required listing details.')
+      const { data: authData, error: authError } = await withTimeout(
+        supabase.auth.getUser(),
+        'Authentication is taking too long. Please sign in again.',
+      )
+      if (authError || !authData.user) {
+        window.location.href = '/login'
+        return
+      }
+
+      const user = authData.user
+      const form = new FormData(e.currentTarget)
+      const title = String(form.get('title') || '').trim()
+      const description = String(form.get('description') || '').trim()
+      const city = String(form.get('city') || '').trim()
+      const condition = String(form.get('condition') || 'Used')
+      const category = String(form.get('category') || '').trim()
+      const price = Number(form.get('price'))
+
+      if (!title || !description || !city || !category || !Number.isFinite(price) || price < 0) {
+        throw new Error('Please complete all required listing details.')
+      }
 
       setMessage('Creating your ad…')
-      // Support both the newer category_id schema and the original marketplace schema used by this project.
-      let listingResult: any = await withTimeout(supabase.from('listings').insert({ seller_id: user.id, category_id: categoryValue, title, description, price, city, condition }).select('id').single(), 'The marketplace database did not respond. Please try again.')
-      if (listingResult.error) {
-        listingResult = await withTimeout(supabase.from('listings').insert({ seller_id: user.id, category: categoryValue, title, description, price, city, region: city, condition }).select('id').single(), 'The marketplace database did not respond. Please try again.')
+      const listingResult = await withTimeout(
+        supabase.from('listings').insert({
+          seller_id: user.id,
+          category,
+          title,
+          description,
+          price,
+          city,
+          region: city,
+          condition,
+        }).select('id').single().then((result) => result),
+        'The marketplace database did not respond. Please try again.',
+      )
+
+      if (listingResult.error || !listingResult.data) {
+        throw new Error(listingResult.error?.message || 'The ad could not be created. Please try again.')
       }
-      if (listingResult.error || !listingResult.data) throw new Error(listingResult.error?.message || 'The ad could not be created. Please try again.')
 
       const listingId = listingResult.data.id
-      if (!files.length) { setMessageType('success'); setMessage('Your ad was published successfully. You can manage it from your dashboard.'); e.currentTarget.reset(); return }
+      if (!files.length) {
+        setMessageType('success')
+        setMessage('Your ad was published successfully. You can manage it from your dashboard.')
+        e.currentTarget.reset()
+        return
+      }
 
-      const metadata = user.user_metadata || {}; const uploaderName = String(metadata.full_name || metadata.name || metadata.display_name || metadata.username || user.email?.split('@')[0] || 'Member').trim(); setMessageType('success'); setMessage('Ad created. Optimizing and uploading photos…')
+      const metadata = user.user_metadata || {}
+      const uploaderName = String(metadata.full_name || metadata.name || metadata.display_name || metadata.username || user.email?.split('@')[0] || 'Member').trim()
+      setMessageType('success')
+      setMessage('Ad created. Optimizing and uploading photos…')
+
       const results = await Promise.all(files.map(async (originalFile, index) => {
         try {
           const processed = await compressAndWatermark(originalFile, uploaderName)
           const path = `${user.id}/${listingId}/${crypto.randomUUID()}-${processed.name}`
-          const upload = await withTimeout(supabase.storage.from('listing-images').upload(path, processed, { contentType: processed.type, upsert: false }), `Photo ${index + 1} could not be uploaded.`)
+          const upload = await withTimeout(
+            supabase.storage.from('listing-images').upload(path, processed, { contentType: processed.type, upsert: false }).then((result) => result),
+            `Photo ${index + 1} could not be uploaded.`,
+          )
           if (upload.error) throw upload.error
-          const imageInsert = await withTimeout(supabase.from('listing_images').insert({ listing_id: listingId, storage_path: path, sort_order: index }), `Photo ${index + 1} could not be saved.`)
+
+          const imageInsert = await withTimeout(
+            supabase.from('listing_images').insert({ listing_id: listingId, storage_path: path, sort_order: index }).then((result) => result),
+            `Photo ${index + 1} could not be saved.`,
+          )
           if (imageInsert.error) throw imageInsert.error
           return true
-        } catch { return false }
+        } catch {
+          return false
+        }
       }))
+
       const uploadedCount = results.filter(Boolean).length
-      setMessage(uploadedCount ? `Your ad is published with ${uploadedCount} photo${uploadedCount === 1 ? '' : 's'}.` : 'Your ad is published. Photos could not be uploaded, but you can add them later.')
-      e.currentTarget.reset(); setFiles([])
+      setMessage(uploadedCount
+        ? `Your ad is published with ${uploadedCount} photo${uploadedCount === 1 ? '' : 's'}.`
+        : 'Your ad is published. Photos could not be uploaded, but you can add them later.')
+      e.currentTarget.reset()
+      setFiles([])
     } catch (error) {
-      setMessageType('error'); setMessage(error instanceof Error ? error.message : 'Something went wrong. Please try again.')
-    } finally { setPublishing(false) }
+      setMessageType('error')
+      setMessage(error instanceof Error ? error.message : 'Something went wrong. Please try again.')
+    } finally {
+      setPublishing(false)
+    }
   }
 
   return (
