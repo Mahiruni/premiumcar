@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import './globals.css';
 import SupportChatbot from '@/components/SupportChatbot';
+import HelpMenu from '@/components/HelpMenu';
 
 export const metadata: Metadata = {
   title: 'Habesha Market — Buy & sell across Ethiopia',
@@ -8,5 +9,5 @@ export const metadata: Metadata = {
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
-  return <html lang="am"><body>{children}<SupportChatbot /></body></html>;
+  return <html lang="am"><body>{children}<HelpMenu /><SupportChatbot /></body></html>;
 }
