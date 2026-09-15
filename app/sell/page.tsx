@@ -12,7 +12,9 @@ const MAX_IMAGE_DIMENSION = 2000
 const TARGET_IMAGE_BYTES = 4.5 * 1024 * 1024
 const WATERMARK = 'Habesha Market'
 
-async function withTimeout<T>(promise: Promise<T>, message: string, ms = REQUEST_TIMEOUT): Promise<T> {
+// Supabase query builders are PromiseLike/thenable objects, not native Promise instances.
+// Accept PromiseLike here so TypeScript can type-check Supabase requests correctly.
+async function withTimeout<T>(promise: PromiseLike<T>, message: string, ms = REQUEST_TIMEOUT): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined
   try { return await Promise.race([promise, new Promise<T>((_, reject) => { timer = setTimeout(() => reject(new Error(message)), ms) })]) }
   finally { if (timer) clearTimeout(timer) }
